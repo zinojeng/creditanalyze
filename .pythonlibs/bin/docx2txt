@@ -1,0 +1,10 @@
+#!/nix/store/30dxq7znh2rgb9n0nvdjhqw0qrfv99fq-python3-3.11.9/bin/python3.11
+
+import docx2txt
+
+if __name__ == '__main__':
+    import sys
+    args = docx2txt.process_args()
+    text = docx2txt.process(args.docx, args.img_dir)
+    output = getattr(sys.stdout, 'buffer', sys.stdout)
+    output.write(text.encode('utf-8'))

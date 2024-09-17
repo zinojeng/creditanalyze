@@ -1,0 +1,6 @@
+{"error":".zip archives do not support non-regular files","level":"error","msg":"unable to write file .cache/replit/modules/python-3.11","time":"2024-09-17T16:02:26Z"}
+{"error":".zip archives do not support non-regular files","level":"error","msg":"unable to write file .cache/replit/modules/replit","time":"2024-09-17T16:02:26Z"}
+{"error":".zip archives do not support non-regular files","level":"error","msg":"unable to write file myenv/bin/python","time":"2024-09-17T16:02:36Z"}
+{"error":".zip archives do not support non-regular files","level":"error","msg":"unable to write file myenv/bin/python3","time":"2024-09-17T16:02:36Z"}
+{"error":".zip archives do not support non-regular files","level":"error","msg":"unable to write file myenv/bin/python3.11","time":"2024-09-17T16:02:36Z"}
+{"error":".zip archives do not support non-regular files","level":"error","msg":"unable to write file myenv/lib64","time":"2024-09-17T16:02:38Z"}
