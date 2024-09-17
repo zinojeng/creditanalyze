@@ -366,4 +366,4 @@ def main():
         print("沒有成功處理任何文件")
 
 if __name__ == "__main__":
-    main()
+    main()git init
