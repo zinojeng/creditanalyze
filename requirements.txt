@@ -1,0 +1,7 @@
+openai
+PyPDF2
+python-docx
+Pillow
+requests
+openpyxl
+python-dotenv
