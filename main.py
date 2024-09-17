@@ -13,6 +13,14 @@ load_dotenv()
 # 固定 OpenAI API 密鑰
 openai_api_key = os.getenv("OPENAI_API_KEY")
 
+# 确保在 virtual environment 中运行
+   if not os.getenv("VIRTUAL_ENV"):
+       print("请在 virtual environment 中运行此脚本。")
+       exit(1)
+
+   # 设置 OpenAI API 密钥
+   openai.api_key = openai_api_key
+
 
 def analyze_file(file_path):
     file_extension = os.path.splitext(file_path)[1].lower()
