@@ -170,3 +170,4 @@ cython_debug/
 main_2.py
 main_3.py
 main_origin.py
+.zeabur/
