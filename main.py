@@ -7,36 +7,105 @@ from openpyxl.styles import Font, Alignment, PatternFill
 from datetime import datetime, timedelta
 import textract
 import base64
+import streamlit as st
+import tempfile
 from dotenv import load_dotenv
+from PIL import Image
+import pytesseract
+import PyPDF2
+import cv2
+import numpy as np
+from pdf2image import convert_from_path
+import re
+import logging
 
-load_dotenv()
-# 固定 OpenAI API 密鑰
-openai_api_key = os.getenv("OPENAI_API_KEY")
+load_dotenv()  # 載入 .env 檔案中的環境變數
 
-# 确保在 virtual environment 中运行
-   if not os.getenv("VIRTUAL_ENV"):
-       print("请在 virtual environment 中运行此脚本。")
-       exit(1)
+# 設置日誌
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-   # 设置 OpenAI API 密钥
-   openai.api_key = openai_api_key
+def preprocess_image(image):
+    # 轉換為灰度圖
+    gray = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2GRAY)
+    
+    # 應用自適應閾值
+    thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
+    
+    # 去噪
+    denoised = cv2.fastNlMeansDenoising(thresh, None, 10, 7, 21)
+    
+    return Image.fromarray(denoised)
 
+def ocr_image(image):
+    preprocessed_image = preprocess_image(image)
+    text = pytesseract.image_to_string(preprocessed_image, lang='chi_tra+eng')
+    return text
+
+def extract_text_from_pdf_pypdf2(file_path):
+    try:
+        with open(file_path, 'rb') as file:
+            reader = PyPDF2.PdfReader(file)
+            text = ""
+            for page in reader.pages:
+                text += page.extract_text()
+        return text
+    except Exception as e:
+        logger.error(f"PyPDF2 從 PDF 提取文本時出錯: {str(e)}")
+        return ""
+
+def extract_text_from_pdf_ocr(file_path):
+    try:
+        images = convert_from_path(file_path)
+        text = ""
+        for image in images:
+            text += ocr_image(image) + "\n\n"
+        return text
+    except Exception as e:
+        logger.error(f"OCR 從 PDF 提取文本時出錯: {str(e)}")
+        return ""
+
+def extract_text_from_pdf(file_path):
+    # 首先嘗試使用 PyPDF2
+    text = extract_text_from_pdf_pypdf2(file_path)
+    
+    # 如果 PyPDF2 提取的文本為空或太短，則使用 OCR
+    if len(text.strip()) < 100:
+        logger.info("PyPDF2 提取的文本不足，切換到 OCR")
+        text = extract_text_from_pdf_ocr(file_path)
+    
+    return text
+
+def clean_text(text):
+    # 移除多餘的空白字符
+    text = re.sub(r'\s+', ' ', text)
+    # 移除非打印字符
+    text = ''.join(char for char in text if char.isprintable() or char.isspace())
+    return text.strip()
 
 def analyze_file(file_path):
     file_extension = os.path.splitext(file_path)[1].lower()
     try:
-        if file_extension in ['.pdf', '.doc', '.docx']:
-            text = textract.process(file_path).decode('utf-8')
-            return {"type": "text", "content": text}
+        if file_extension == '.pdf':
+            text = extract_text_from_pdf(file_path)
+        elif file_extension in ['.doc', '.docx']:
+            text = textract.process(file_path).decode('utf-8', errors='ignore')
         elif file_extension in ['.jpg', '.jpeg', '.png']:
-            with open(file_path, "rb") as image_file:
-                encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
-            return {"type": "image", "content": encoded_string}
+            image = Image.open(file_path)
+            text = ocr_image(image)
         else:
-            print(f"不支持的文件類型：{file_extension}")
+            logger.error(f"不支援的檔案類型：{file_extension}")
             return None
+
+        text = clean_text(text)
+        
+        if not text.strip():
+            logger.warning(f"無法從檔案 {file_path} 提取文本")
+            return None
+
+        return text
     except Exception as e:
-        print(f"處理文件 {file_path} 時出錯: {str(e)}")
+        logger.error(f"處理檔案 {file_path} 時出錯: {str(e)}")
         return None
 
 def calculate_credits(duration_minutes, credit_type):
@@ -46,15 +115,20 @@ def calculate_credits(duration_minutes, credit_type):
         return round(duration_minutes / 50 * 0.5, 1)
 
 def get_gpt4_json_response(client, prompt):
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": "你是一個專業的文件分析助手。請以JSON格式返回分析結果。"},
-            {"role": "user", "content": prompt}
-        ],
-        response_format={"type": "json_object"}
-    )
-    return json.loads(response.choices[0].message.content)
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "你是一個專業的文件分析助手。請以JSON格式返回分析結果。"},
+                {"role": "user", "content": prompt}
+            ],
+            response_format={"type": "json_object"},
+            max_tokens=1500  # 增加 token 限制
+        )
+        return json.loads(response.choices[0].message.content)
+    except Exception as e:
+        logger.error(f"GPT-4 API 調用失敗: {str(e)}")
+        return None
 
 def calculate_duration(start_time, end_time):
     start = datetime.strptime(start_time, "%H:%M")
@@ -69,7 +143,7 @@ def process_topics(topics):
     for topic in topics:
         processed_topic = {
             "topic": topic.get("topic", ""),
-            "speaker": topic.get("speaker", ""),
+            "speaker": topic.get("speaker", ""),  # 保留為空字串如果沒有講者
             "moderator": topic.get("moderator", ""),
             "time": topic.get("time", ""),
             "duration": int(topic.get("duration", 0)),
@@ -89,7 +163,7 @@ def write_to_excel(all_results, output_file):
     title_alignment = Alignment(horizontal="center", vertical="center")
 
     # 寫入表頭
-    headers = ["文件名", "主題", "主辦單位", "日期", "地點", "積分類別", "原始積分數", "AI初審積分"]
+    headers = ["文件名", "主題", "主辦單位", "日期", "地點", "積分類別", "原積分數", "AI初審積分"]
     for col, header in enumerate(headers, start=1):
         cell = ws.cell(row=1, column=col, value=header)
         cell.font = title_font
@@ -133,7 +207,7 @@ def write_to_excel(all_results, output_file):
             ws_detail.cell(row=current_row, column=2, value=info[1])
             current_row += 1
 
-        # 寫入演講主題表格標題
+        # 寫入演講主題表格題
         headers = ["主題", "講者", "主持人", "時間", "持續時間(分鐘)", "AI初審"]
         for col, header in enumerate(headers, start=1):
             cell = ws_detail.cell(row=current_row, column=col, value=header)
@@ -171,25 +245,26 @@ def write_to_excel(all_results, output_file):
 
     wb.save(output_file)
 
+def is_special_item(topic):
+    special_keywords = [
+        'registration', '報到', '簽到',
+        'opening', '開幕', '開場',
+        'closing', '閉幕', '結束',
+        'panel discussion', '座談會', '討論會',
+        'break', '休息',
+        'lunch', '午餐',
+        'dinner', '晚餐',
+        'welcome', '歡迎'
+    ]
+    topic_lower = topic.lower()
+    return any(keyword in topic_lower for keyword in special_keywords)
+
 def process_single_file(client, file_path):
-    if not os.path.isfile(file_path):
-        print(f"文件不存在：{file_path}")
-        return None
+    try:
+        analyzed_content = analyze_file(file_path)
+        if not analyzed_content:
+            return None
 
-    file_extension = os.path.splitext(file_path)[1].lower()
-    print(f"處理文件：{file_path}，文件類型：{file_extension}")
-
-    if file_extension not in ['.pdf', '.doc', '.docx', '.jpg', '.jpeg', '.png']:
-        print(f"不支持的文件類型：{file_extension}")
-        return None
-
-    analyzed_content = analyze_file(file_path)
-    if not analyzed_content:
-        return None
-
-    print(f"文件 {file_path} 的內容類型：{analyzed_content['type']}")
-
-    if analyzed_content["type"] == "text":
         prompt = f"""
         分析以下內容並提取關鍵資訊，以JSON格式返回結果：
         - 主題
@@ -229,149 +304,156 @@ def process_single_file(client, file_path):
         6. Registration, Opening Remarks, Closing Remarks 等項目應包含在演講主題列表中，並視為與會議主題直接相關。
         7. 積分類別計分原則："中華民國糖尿病學會"主辦，或"糖尿病學會"主辦，為甲類，其餘為乙類。
         8. AI初審：針對topic內容進行審查。和糖尿病、高血壓、高血脂或相關併發症有關的，註明"相關"，沒有關係的，註明"不相關"；不確定者，註明"？"。"不相關"者請註明原因。
-           Registration, Opening Remarks, Closing Remarks 等項目不需要進行 AI 初審，其時間納入學分總時間。
+           
+        9. 有以下相關字眼，Registration, Opening Remarks, Closing Remarks, Pannel Discussion, 等項目不需要進行 AI 初審，不需列是否相關，但其時間納入學分總時間。
+        10. 如果無法辨識講者名字，請將講者欄位留空。
 
-        以下是分析的內容：
-
-        {analyzed_content['content']}
+        以下是需要分析的內容：
+        {analyzed_content}
         """
-        messages = [
-            {"role": "system", "content": "你是一個專業的文件分析助手。請以JSON格式返回分析結果。"},
-            {"role": "user", "content": prompt}
-        ]
-    else:  # image
-        prompt = """
-        請分析這張圖片，並提取以下關鍵資訊，以JSON格式返回結果：
-        - 主題
-        - 主辦單位
-        - 日期
-        - 地點
-        - 積分類別
-        - 演講主題（多筆，每筆包括：主題（包含時間）、講者、主持人、時間（time）、持續時間（分鐘）、AI初審）
 
-        JSON格式如下：
-        {
-            "主題": "string",
-            "主辦單位": "string",
-            "日期": "string",
-            "地點": "string",
-            "積分類別": "string",
-            "演講主題": [
-                {
-                    "topic": "string",
-                    "speaker": "string",
-                    "moderator": "string",
-                    "time": "string",
-                    "duration": int,
-                    "ai_review": "string"
-                },
-                // ... 可能有多筆
-            ]
-        }
+        parsed_result = get_gpt4_json_response(client, prompt)
+        if not parsed_result:
+            logger.error("GPT-4 分析失敗")
+            return None
 
-        注意事項與之前相同。請確保返回的 JSON 格式正確，特別是 "演講主題" 應該是一個數組。
-        如果無法從圖片中提取某些信息，請將相應字段設置為空字符串或空數組。
-        """
-        messages = [
-            {"role": "system", "content": "你是一個專業的圖片分析助手。請以JSON格式返回分析結果。"},
-            {"role": "user", "content": [
-                {"type": "text", "text": prompt},
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{analyzed_content['content']}"}},
-            ]}
-        ]
+        # 確保 '演講主題' 字段存在且為列表
+        if '演講主題' not in parsed_result or not isinstance(parsed_result['演講主題'], list):
+            logger.warning(f"警告：分析結果中沒有有效的 '演講主題' 字段")
+            parsed_result['演講主題'] = []
 
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=messages,
-            max_tokens=1000,
-            response_format={"type": "json_object"}
-        )
-        print(f"API 響應：{response.choices[0].message.content}")
-        parsed_result = json.loads(response.choices[0].message.content)
-    except json.JSONDecodeError as e:
-        print(f"JSON 解析錯誤：{str(e)}")
-        print(f"原始響應：{response.choices[0].message.content}")
-        return None
+        # 處理主題，重新計算包含 QA 的 duration
+        parsed_result['演講主題'] = process_topics(parsed_result['演講主題'])
+
+        # 算總時間和有效時間
+        total_duration = 0
+        valid_duration = 0
+        for topic in parsed_result['演講主題']:
+            duration = topic.get('duration', 0)
+            total_duration += duration
+            
+            # 檢查是否為特殊項目
+            if is_special_item(topic.get('topic', '')):
+                valid_duration += duration
+                # 確保這些項目不進行 AI 初審
+                topic['ai_review'] = ''
+            else:
+                # 檢查 AI 初審結果
+                ai_review = topic.get('ai_review', '').lower()
+                if ai_review == '相關' or ai_review == '':
+                    valid_duration += duration
+                elif '?' in ai_review:
+                    # 對於不確定的情況，計入一半的時間
+                    valid_duration += duration / 2
+
+        # 計算積分
+        credit_type = parsed_result.get('積分類別', '')
+        credits = calculate_credits(valid_duration, credit_type)
+
+        # 添加計算結果到 parsed_result
+        parsed_result['原始積分數'] = calculate_credits(total_duration, credit_type)
+        parsed_result['AI初審積分'] = credits
+        parsed_result['AI初審積分說明'] = f"有效時間：{valid_duration} 分鐘，總時間：{total_duration} 分鐘"
+
+        return parsed_result
     except Exception as e:
-        print(f"處理文件 {file_path} 時發生異常: {str(e)}")
+        logger.error(f"處理檔案時發生異常: {str(e)}")
         return None
-
-    # 檢查解析後的結果
-    print(f"解析後的結果：{parsed_result}")
-
-    # 確保 '演講主題' 字段存在且為列表
-    if '演講主題' not in parsed_result or not isinstance(parsed_result['演講主題'], list):
-        print(f"警告：文件 {file_path} 的分析結果中沒有有效的 '演講主題' 字段")
-        parsed_result['演講主題'] = []
-
-    # 處理主題，重新計算包含 QA 的 duration
-    parsed_result['演講主題'] = process_topics(parsed_result['演講主題'])
-
-    # 算總時間和有效時間
-    total_duration = sum(topic.get('duration', 0) for topic in parsed_result['演講主題'])
-    valid_duration = sum(topic.get('duration', 0) for topic in parsed_result['演講主題'] 
-                         if topic.get('ai_review') != "不相關" or 
-                         topic.get('topic', '').lower() in ['registration', 'opening remarks', 'closing remarks'])
-    
-    # 計算積分數
-    credit_type = parsed_result.get('積分類別', '乙類')  # 默認為乙類
-    original_credits = calculate_credits(total_duration, credit_type)
-    adjusted_credits = calculate_credits(valid_duration, credit_type)
-    
-    # 生成 AI 初審積分說明
-    ai_review_explanation = f"""
-    原始總時數：{total_duration} 分鐘
-    原始積分數：{original_credits} 學分（{credit_type}）
-    AI 初審後有效時數：{valid_duration} 分鐘
-    AI 初審積分：{adjusted_credits} 學分（{credit_type}）
-    """
-    parsed_result['AI初審積分說明'] = ai_review_explanation.strip()
-    
-    # 添加積分數和AI初審積分到結果中
-    parsed_result['原始積分數'] = original_credits
-    parsed_result['AI初審積分'] = adjusted_credits
-    
-    # 添加文件名到結果中
-    parsed_result['文件名'] = os.path.basename(file_path)
-    
-    return parsed_result
 
 def main():
-    client = openai.OpenAI(api_key=OPENAI_API_KEY)
+    st.title("糖尿病學會 學分分析助手")
 
-    # 指定包含文件的目錄
-    directory = '/home/runner/creditanalyze/'
+    # 在側邊欄中讓使用者輸入 OpenAI API 金鑰
+    with st.sidebar:
+        st.header("設定")
+        openai_api_key = st.text_input(
+            "請輸入您的 OpenAI API 金鑰",
+            value=os.getenv("OPENAI_API_KEY", ""),
+            type="password",
+            key="openai_api_key_input"
+        )
+        if not openai_api_key:
+            st.sidebar.warning("請輸入有效的 OpenAI API 金鑰")
+        else:
+            st.sidebar.success("API 金鑰已設定")
+        
+        # 添加空白空間，將聯絡信息推到底部
+        st.sidebar.empty()
+        st.sidebar.empty()
+        st.sidebar.empty()
+        
+        # 在側邊欄底部添加聯絡信息
+        st.sidebar.markdown("---")  # 添加分隔線
+        st.sidebar.markdown("**程式設計:** 曾耀賢醫師 童綜合醫院")
+        st.sidebar.markdown("**聯絡:** LINE: zinojeng")
 
-    # 獲取目錄中所有的 PDF、DOC、DOCX 和 JPG 文件
-    supported_files = [f for f in os.listdir(directory) if os.path.splitext(f)[1].lower() in ('.pdf', '.doc', '.docx', '.jpg', '.jpeg', '.png')]
+    # 主要內容區域
+    if not openai_api_key:
+        st.warning("請在側邊欄輸入 OpenAI API 金鑰以繼續")
+        return
 
-    print("檢測到的文件：")
-    for file in supported_files:
-        print(file)
+    # 設定 OpenAI API 金鑰
+    os.environ["OPENAI_API_KEY"] = openai_api_key
+    openai.api_key = openai_api_key
 
-    all_results = []
+    # 檔案上傳
+    uploaded_files = st.file_uploader("上傳檔案（支援 PDF, DOC, DOCX, JPG, JPEG, PNG）", accept_multiple_files=True, type=['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png'])
 
-    for file in supported_files:
-        file_path = os.path.join(directory, file)
-        print(f"正在處理文件：{file_path}")
+    if uploaded_files:
+        all_results = []
+        progress_bar = st.progress(0)
 
-        try:
-            parsed_result = process_single_file(client, file_path)
-            if parsed_result:
-                all_results.append(parsed_result)
-            else:
-                print(f"處理文件 {file_path} 時出錯")
-        except Exception as e:
-            print(f"處理文件 {file_path} 時發生異常: {str(e)}")
+        for index, uploaded_file in enumerate(uploaded_files):
+            original_filename = uploaded_file.name
+            st.write(f"正在處理檔案：{original_filename}")
 
-    if all_results:
-        # 生成輸出文件名
-        output_file = os.path.join(directory, 'combined_analysis_results.xlsx')
-        write_to_excel(all_results, output_file)
-        print(f"所有結果已輸出到 {output_file}")
-    else:
-        print("沒有成功處理任何文件")
+            with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(original_filename)[1]) as temp_file:
+                temp_file.write(uploaded_file.getvalue())
+                temp_file_path = temp_file.name
+
+            try:
+                client = openai.OpenAI(api_key=openai_api_key)
+                parsed_result = process_single_file(client, temp_file_path)
+                if parsed_result:
+                    parsed_result['文件名'] = original_filename  # 使用原始檔案名
+                    all_results.append(parsed_result)
+                    st.success(f"成功處理檔案：{original_filename}")
+                    
+                    # 顯示辨識結果
+                    #st.subheader(f"文件：{original_filename} 的辨識結果")
+                    #st.json(parsed_result)
+
+                    # 檢查需要人工審核的項目
+                    need_review = [topic for topic in parsed_result['演講主題'] if not topic['speaker'] or topic['ai_review'] == '？']
+                    if need_review:
+                        st.warning("以下項目可能需要人工審核：")
+                        for topic in need_review:
+                            st.write(f"- 演講主題: {topic['topic']}, 講者: {'未識別' if not topic['speaker'] else topic['speaker']}")
+                else:
+                    st.error(f"處理檔案 {original_filename} 時出錯")
+            except Exception as e:
+                logger.error(f"處理檔案 {original_filename} 時發生異常: {str(e)}")
+                st.error(f"處理檔案 {original_filename} 時發生異常: {str(e)}")
+            finally:
+                os.unlink(temp_file_path)
+            
+            # 更新進度條
+            progress_bar.progress((index + 1) / len(uploaded_files))
+
+        if all_results:
+            output_file = '分析結果總表.xlsx'
+            write_to_excel(all_results, output_file)
+            st.success(f"所有結果已輸出到 {output_file}")
+            
+            with open(output_file, "rb") as file:
+                st.download_button(
+                    label="下載分析結果",
+                    data=file,
+                    file_name=output_file,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+        else:
+            st.warning("沒有成功處理任何檔案")
 
 if __name__ == "__main__":
-    main()git init
+    main()
