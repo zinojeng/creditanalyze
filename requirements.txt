@@ -23,4 +23,5 @@ beautifulsoup4
 sqlalchemy
 flask
 django
-pytestopencv-python
+pytest
+opencv-python
