@@ -10,10 +10,9 @@ import base64
 import streamlit as st
 import tempfile
 from dotenv import load_dotenv
-from PIL import Image
+from PIL import Image, ImageOps, ImageFilter
 import pytesseract
 import PyPDF2
-import cv2
 import numpy as np
 from pdf2image import convert_from_path
 import re
@@ -26,16 +25,23 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 def preprocess_image(image):
+    # 確保輸入是 PIL Image 對象
+    if not isinstance(image, Image.Image):
+        image = Image.fromarray(image)
+    
     # 轉換為灰度圖
-    gray = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2GRAY)
+    gray = ImageOps.grayscale(image)
     
-    # 應用自適應閾值
-    thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
+    # 應用高斯模糊
+    blurred = gray.filter(ImageFilter.GaussianBlur(radius=2))
     
-    # 去噪
-    denoised = cv2.fastNlMeansDenoising(thresh, None, 10, 7, 21)
+    # 應用閾值處理
+    thresh = blurred.point(lambda x: 0 if x < 128 else 255, '1')
     
-    return Image.fromarray(denoised)
+    # 去噪（使用中值濾波器作為簡單的去噪替代）
+    denoised = thresh.filter(ImageFilter.MedianFilter(size=3))
+    
+    return denoised
 
 def ocr_image(image):
     preprocessed_image = preprocess_image(image)
