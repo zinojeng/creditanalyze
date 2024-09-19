@@ -10,9 +10,10 @@ import base64
 import streamlit as st
 import tempfile
 from dotenv import load_dotenv
-from PIL import Image, ImageOps, ImageFilter
+from PIL import Image
 import pytesseract
 import PyPDF2
+import cv2
 import numpy as np
 from pdf2image import convert_from_path
 import re
@@ -25,23 +26,16 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 def preprocess_image(image):
-    # 確保輸入是 PIL Image 對象
-    if not isinstance(image, Image.Image):
-        image = Image.fromarray(image)
-    
     # 轉換為灰度圖
-    gray = ImageOps.grayscale(image)
+    gray = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2GRAY)
     
-    # 應用高斯模糊
-    blurred = gray.filter(ImageFilter.GaussianBlur(radius=2))
+    # 應用自適應閾值
+    thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
     
-    # 應用閾值處理
-    thresh = blurred.point(lambda x: 0 if x < 128 else 255, '1')
+    # 去噪
+    denoised = cv2.fastNlMeansDenoising(thresh, None, 10, 7, 21)
     
-    # 去噪（使用中值濾波器作為簡單的去噪替代）
-    denoised = thresh.filter(ImageFilter.MedianFilter(size=3))
-    
-    return denoised
+    return Image.fromarray(denoised)
 
 def ocr_image(image):
     preprocessed_image = preprocess_image(image)
@@ -49,63 +43,38 @@ def ocr_image(image):
     return text
 
 def extract_text_from_pdf_pypdf2(file_path):
-    with open(file_path, 'rb') as file:
-        reader = PyPDF2.PdfReader(file)
-        text = ""
-        for page in reader.pages:
-            text += page.extract_text() + "\n"
-    return text
-
-def extract_text_from_pdf_ocr(file_path):
-    text = ""
-    images = convert_from_path(file_path)
-    for image in images:
-        text += ocr_image(image) + "\n"
-    return text
-# def extract_text_from_pdf_pypdf2(file_path):
-#     try:
-#         with open(file_path, 'rb') as file:
-#             reader = PyPDF2.PdfReader(file)
-#             text = ""
-#             for page in reader.pages:
-#                 text += page.extract_text()
-#         return text
-#     except Exception as e:
-#         logger.error(f"PyPDF2 從 PDF 提取文本時出錯: {str(e)}")
-#         return ""
-
-# def extract_text_from_pdf_ocr(file_path):
-#     try:
-#         images = convert_from_path(file_path)
-#         text = ""
-#         for image in images:
-#             text += ocr_image(image) + "\n\n"
-#         return text
-#     except Exception as e:
-#         logger.error(f"OCR 從 PDF 提取文本時出錯: {str(e)}")
-#         return ""
-
-def extract_text_from_pdf(file_path):
     try:
-        logger.info("嘗試使用 PyPDF2 提取文本")
-        text = extract_text_from_pdf_pypdf2(file_path)
-        if not text.strip():
-            logger.info("PyPDF2 提取失敗，嘗試使用 OCR")
-            text = extract_text_from_pdf_ocr(file_path)
+        with open(file_path, 'rb') as file:
+            reader = PyPDF2.PdfReader(file)
+            text = ""
+            for page in reader.pages:
+                text += page.extract_text()
         return text
     except Exception as e:
-        logger.error(f"從 PDF 提取文本時出錯: {str(e)}", exc_info=True)
+        logger.error(f"PyPDF2 從 PDF 提取文本時出錯: {str(e)}")
         return ""
-# def extract_text_from_pdf(file_path):
-#     # 首先嘗試使用 PyPDF2
-#     text = extract_text_from_pdf_pypdf2(file_path)
+
+def extract_text_from_pdf_ocr(file_path):
+    try:
+        images = convert_from_path(file_path)
+        text = ""
+        for image in images:
+            text += ocr_image(image) + "\n\n"
+        return text
+    except Exception as e:
+        logger.error(f"OCR 從 PDF 提取文本時出錯: {str(e)}")
+        return ""
+
+def extract_text_from_pdf(file_path):
+    # 首先嘗試使用 PyPDF2
+    text = extract_text_from_pdf_pypdf2(file_path)
     
-#     # 如果 PyPDF2 提取的文本為空或太短，則使用 OCR
-#     if len(text.strip()) < 100:
-#         logger.info("PyPDF2 提取的文本不足，切換到 OCR")
-#         text = extract_text_from_pdf_ocr(file_path)
+    # 如果 PyPDF2 提取的文本為空或太短，則使用 OCR
+    if len(text.strip()) < 100:
+        logger.info("PyPDF2 提取的文本不足，切換到 OCR")
+        text = extract_text_from_pdf_ocr(file_path)
     
-#     return text
+    return text
 
 def clean_text(text):
     # 移除多餘的空白字符
@@ -114,16 +83,10 @@ def clean_text(text):
     text = ''.join(char for char in text if char.isprintable() or char.isspace())
     return text.strip()
 
-# def analyze_file(file_path):
-#     file_extension = os.path.splitext(file_path)[1].lower()
-#     try:
-#         if file_extension == '.pdf':
-#             text = extract_text_from_pdf(file_path)
 def analyze_file(file_path):
     file_extension = os.path.splitext(file_path)[1].lower()
     try:
         if file_extension == '.pdf':
-            logger.info(f"開始處理 PDF 文件: {file_path}")
             text = extract_text_from_pdf(file_path)
         elif file_extension in ['.doc', '.docx']:
             text = textract.process(file_path).decode('utf-8', errors='ignore')
@@ -142,37 +105,8 @@ def analyze_file(file_path):
 
         return text
     except Exception as e:
-        logger.error(f"處理檔案 {file_path} 時出錯: {str(e)}", exc_info=True)
+        logger.error(f"處理檔案 {file_path} 時出錯: {str(e)}")
         return None
-    # except Exception as e:
-    #     logger.error(f"處理檔案 {file_path} 時出錯: {str(e)}")
-    #     return None
-
-    
-# def analyze_file(file_path):
-#     file_extension = os.path.splitext(file_path)[1].lower()
-#     try:
-#         if file_extension == '.pdf':
-#             text = extract_text_from_pdf(file_path)
-#         elif file_extension in ['.doc', '.docx']:
-#             text = textract.process(file_path).decode('utf-8', errors='ignore')
-#         elif file_extension in ['.jpg', '.jpeg', '.png']:
-#             image = Image.open(file_path)
-#             text = ocr_image(image)
-#         else:
-#             logger.error(f"不支援的檔案類型：{file_extension}")
-#             return None
-
-#         text = clean_text(text)
-        
-#         if not text.strip():
-#             logger.warning(f"無法從檔案 {file_path} 提取文本")
-#             return None
-
-#         return text
-#     except Exception as e:
-#         logger.error(f"處理檔案 {file_path} 時出錯: {str(e)}")
-#         return None
 
 def calculate_credits(duration_minutes, credit_type):
     if credit_type == "甲類":
