@@ -16,14 +16,8 @@ beautifulsoup4>=4.8.0,<5.0.0
 sqlalchemy>=2.0.0,<3.0.0
 scipy>=1.11.0,<2.0.0
 textract>=1.6.5,<2.0.0
-docx2pdf>=0.1.8,<0.2.0
-
-# 新增的依賴項
 python-docx>=0.8.11,<0.9.0
 PyMuPDF>=1.21.1,<2.0.0
 pydantic>=1.10.7,<2.0.0
 opencv-python-headless>=4.7.0,<5.0.0
 easyocr>=1.7.0,<2.0.0
-
-docx2pdf>=0.1.8,<0.2.0
-pywin32>=305

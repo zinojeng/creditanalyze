@@ -335,7 +335,7 @@ def process_single_file(client, file_path):
         JSON格式如下：
         {{
             "主題": "string",
-            "主辦單位": "string",
+            "主辦��位": "string",
             "日期": "string",
             "地點": "string",
             "積分類別": "string",
@@ -364,7 +364,7 @@ def process_single_file(client, file_path):
         7. 積分類別計分原則："中華民國糖尿病學會"主辦，或"糖尿病學會"主辦，為甲類，其餘為乙類。
         8. AI初審：針對topic內容進行審查。和糖尿病、高血壓、高血脂或相關併發症有關的，註明"相關"，沒有關係的，註明"不相關"；不確定者，註明"？"。"不相關"者請註明原因。
            
-        9. 有以下相關字眼，Registration, Opening Remarks, Closing Remarks, Pannel Discussion, 等項目不需要進行 AI 初審，不需列是否相關，但其時間納入學分總時間。
+        9. 有以下相關字眼，Registration, Opening Remarks, Closing Remarks, Pannel Discussion, 等項目不需要進行 AI 初審，不需列是否相關，但其時間��入學分總時間。
         10. 如果無法辨識講者名字，請將講者欄位留空。
 
         以下是需要分析的內容：
