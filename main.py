@@ -222,7 +222,7 @@ def write_to_excel(all_results, output_file):
     title_alignment = Alignment(horizontal="center", vertical="center")
 
     # 寫入表頭
-    headers = ["文件名", "主題", "主辦單位", "日期", "地點", "積分類別", "原積分數", "AI初審積分"]
+    headers = ["文件名", "主題", "��辦單位", "日期", "地點", "積分類別", "原積分數", "AI初審積分"]
     for col, header in enumerate(headers, start=1):
         cell = ws.cell(row=1, column=col, value=header)
         cell.font = title_font
@@ -335,7 +335,7 @@ def process_single_file(client, file_path):
         JSON格式如下：
         {{
             "主題": "string",
-            "主辦��位": "string",
+            "主辦單位": "string",
             "日期": "string",
             "地點": "string",
             "積分類別": "string",
@@ -364,7 +364,7 @@ def process_single_file(client, file_path):
         7. 積分類別計分原則："中華民國糖尿病學會"主辦，或"糖尿病學會"主辦，為甲類，其餘為乙類。
         8. AI初審：針對topic內容進行審查。和糖尿病、高血壓、高血脂或相關併發症有關的，註明"相關"，沒有關係的，註明"不相關"；不確定者，註明"？"。"不相關"者請註明原因。
            
-        9. 有以下相關字眼，Registration, Opening Remarks, Closing Remarks, Pannel Discussion, 等項目不需要進行 AI 初審，不需列是否相關，但其時間��入學分總時間。
+        9. 有以下相關字眼，Registration, Opening Remarks, Closing Remarks, Pannel Discussion, 等項目不需要進行 AI 初審，不需列是否相關，但其時間應入學分總時間。
         10. 如果無法辨識講者名字，請將講者欄位留空。
 
         以下是需要分析的內容：
@@ -422,6 +422,14 @@ def process_single_file(client, file_path):
 def main():
     st.title("糖尿病學會 學分分析助手")
 
+    # 添加文件格式說明
+    st.markdown("""
+    **注意：** 
+    - 支援的文件格式：PDF, DOCX, JPG, JPEG, PNG
+    - 不支援 .doc 格式，請先將 .doc 文件轉換為 .docx 格式後再上傳
+    - 轉換方法：使用 Microsoft Word 打開 .doc 文件，然後「另存新檔」為 .docx 格式
+    """)
+
     # 在側邊欄中讓使用者輸入 OpenAI API 金鑰
     with st.sidebar:
         st.header("設定")
@@ -456,7 +464,7 @@ def main():
     openai.api_key = openai_api_key
 
     # 檔案上傳
-    uploaded_files = st.file_uploader("上傳檔案（支援 PDF, DOC, DOCX, JPG, JPEG, PNG）", accept_multiple_files=True, type=['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png'])
+    uploaded_files = st.file_uploader("上傳檔案（支援 PDF, DOCX, JPG, JPEG, PNG）", accept_multiple_files=True, type=['pdf', 'docx', 'jpg', 'jpeg', 'png'])
 
     if uploaded_files:
         all_results = []
