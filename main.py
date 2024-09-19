@@ -1,4 +1,22 @@
+import streamlit as st
+import subprocess
+import sys
+
+# Add this at the beginning of your script
+def install(package):
+    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+
+# Check if cv2 is installed, if not, install it
+try:
+    import cv2
+except ImportError:
+    st.info("Installing required packages...")
+    install("opencv-python-headless")
+    import cv2
+
+# Rest of your imports
 import openai
+from openai import OpenAI
 import os
 import json
 import math
@@ -7,13 +25,11 @@ from openpyxl.styles import Font, Alignment, PatternFill
 from datetime import datetime, timedelta
 import textract
 import base64
-import streamlit as st
 import tempfile
 from dotenv import load_dotenv
 from PIL import Image
 import pytesseract
 import PyPDF2
-import cv2
 import numpy as np
 from pdf2image import convert_from_path
 import re
@@ -65,14 +81,57 @@ def extract_text_from_pdf_ocr(file_path):
         logger.error(f"OCR 從 PDF 提取文本時出錯: {str(e)}")
         return ""
 
-def extract_text_from_pdf(file_path):
+def extract_text_from_pdf_gpt4_vision(client, file_path):
+    try:
+        images = convert_from_path(file_path)
+        all_text = ""
+        for i, image in enumerate(images):
+            # 保存圖片到臨時文件
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as temp_file:
+                image.save(temp_file, format="PNG")
+                temp_file_path = temp_file.name
+
+            # 讀取圖片文件
+            with open(temp_file_path, "rb") as image_file:
+                base64_image = base64.b64encode(image_file.read()).decode('utf-8')
+
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "請閱讀這張圖片，並提取所有可見的文字內容。只需返回提取的文字，不需要任何解釋或格式化。"},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/png;base64,{base64_image}"
+                                }
+                            },
+                        ],
+                    }
+                ],
+                max_tokens=1000,
+            )
+            
+            all_text += response.choices[0].message.content + "\n\n"
+            
+            # 刪除臨時文件
+            os.unlink(temp_file_path)
+
+        return all_text.strip()
+    except Exception as e:
+        logger.error(f"GPT-4 Vision 從 PDF 提取文本時出錯: {str(e)}")
+        return ""
+
+def extract_text_from_pdf(client, file_path):
     # 首先嘗試使用 PyPDF2
     text = extract_text_from_pdf_pypdf2(file_path)
     
-    # 如果 PyPDF2 提取的文本為空或太短，則使用 OCR
+    # 如果 PyPDF2 提取的文本為空或太短，則使用 GPT-4 Vision
     if len(text.strip()) < 100:
-        logger.info("PyPDF2 提取的文本不足，切換到 OCR")
-        text = extract_text_from_pdf_ocr(file_path)
+        logger.info("PyPDF2 提取的文本不足，切換到 GPT-4 Vision")
+        text = extract_text_from_pdf_gpt4_vision(client, file_path)
     
     return text
 
@@ -83,11 +142,11 @@ def clean_text(text):
     text = ''.join(char for char in text if char.isprintable() or char.isspace())
     return text.strip()
 
-def analyze_file(file_path):
+def analyze_file(client, file_path):
     file_extension = os.path.splitext(file_path)[1].lower()
     try:
         if file_extension == '.pdf':
-            text = extract_text_from_pdf(file_path)
+            text = extract_text_from_pdf(client, file_path)  # 注意這裡需要傳入 client
         elif file_extension in ['.doc', '.docx']:
             text = textract.process(file_path).decode('utf-8', errors='ignore')
         elif file_extension in ['.jpg', '.jpeg', '.png']:
@@ -261,7 +320,7 @@ def is_special_item(topic):
 
 def process_single_file(client, file_path):
     try:
-        analyzed_content = analyze_file(file_path)
+        analyzed_content = analyze_file(client, file_path)  # 注意這裡需要傳入 client
         if not analyzed_content:
             return None
 
