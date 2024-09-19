@@ -6,14 +6,6 @@ import sys
 def install(package):
     subprocess.check_call([sys.executable, "-m", "pip", "install", package])
 
-# Check if cv2 is installed, if not, install it
-try:
-    import cv2
-except ImportError:
-    st.info("Installing required packages...")
-    install("opencv-python-headless")
-    import cv2
-
 # Rest of your imports
 import openai
 from openai import OpenAI
@@ -23,12 +15,10 @@ import math
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill
 from datetime import datetime, timedelta
-import textract
 import base64
 import tempfile
 from dotenv import load_dotenv
 from PIL import Image
-import pytesseract
 import PyPDF2
 import numpy as np
 from pdf2image import convert_from_path
@@ -41,23 +31,6 @@ load_dotenv()  # 載入 .env 檔案中的環境變數
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-def preprocess_image(image):
-    # 轉換為灰度圖
-    gray = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2GRAY)
-    
-    # 應用自適應閾值
-    thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
-    
-    # 去噪
-    denoised = cv2.fastNlMeansDenoising(thresh, None, 10, 7, 21)
-    
-    return Image.fromarray(denoised)
-
-def ocr_image(image):
-    preprocessed_image = preprocess_image(image)
-    text = pytesseract.image_to_string(preprocessed_image, lang='chi_tra+eng')
-    return text
-
 def extract_text_from_pdf_pypdf2(file_path):
     try:
         with open(file_path, 'rb') as file:
@@ -68,17 +41,6 @@ def extract_text_from_pdf_pypdf2(file_path):
         return text
     except Exception as e:
         logger.error(f"PyPDF2 從 PDF 提取文本時出錯: {str(e)}")
-        return ""
-
-def extract_text_from_pdf_ocr(file_path):
-    try:
-        images = convert_from_path(file_path)
-        text = ""
-        for image in images:
-            text += ocr_image(image) + "\n\n"
-        return text
-    except Exception as e:
-        logger.error(f"OCR 從 PDF 提取文本時出錯: {str(e)}")
         return ""
 
 def extract_text_from_pdf_gpt4_vision(client, file_path):
@@ -146,12 +108,33 @@ def analyze_file(client, file_path):
     file_extension = os.path.splitext(file_path)[1].lower()
     try:
         if file_extension == '.pdf':
-            text = extract_text_from_pdf(client, file_path)  # 注意這裡需要傳入 client
+            text = extract_text_from_pdf(client, file_path)
         elif file_extension in ['.doc', '.docx']:
             text = textract.process(file_path).decode('utf-8', errors='ignore')
         elif file_extension in ['.jpg', '.jpeg', '.png']:
-            image = Image.open(file_path)
-            text = ocr_image(image)
+            # 使用 GPT-4 Vision 處理圖片
+            with open(file_path, "rb") as image_file:
+                base64_image = base64.b64encode(image_file.read()).decode('utf-8')
+            
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "請閱讀這張圖片，並提取所有可見的文字內容。只需返回提取的文字，不需要任何解釋或格式化。"},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/png;base64,{base64_image}"
+                                }
+                            },
+                        ],
+                    }
+                ],
+                max_tokens=1000,
+            )
+            text = response.choices[0].message.content
         else:
             logger.error(f"不支援的檔案類型：{file_extension}")
             return None
@@ -320,7 +303,7 @@ def is_special_item(topic):
 
 def process_single_file(client, file_path):
     try:
-        analyzed_content = analyze_file(client, file_path)  # 注意這裡需要傳入 client
+        analyzed_content = analyze_file(client, file_path)
         if not analyzed_content:
             return None
 
@@ -515,4 +498,4 @@ def main():
             st.warning("沒有成功處理任何檔案")
 
 if __name__ == "__main__":
-    main()  # 這會在文件末尾添加一個空行
+    main()
