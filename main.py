@@ -428,6 +428,7 @@ def main():
     - 支援的文件格式：PDF, DOCX, JPG, JPEG, PNG
     - 不支援 .doc 格式，請先將 .doc 文件轉換為 .docx 格式後再上傳
     - 轉換方法：使用 Microsoft Word 打開 .doc 文件，然後「另存新檔」為 .docx 格式
+    - 尚不支援複雜PDF文件的處理
     """)
 
     # 在側邊欄中設置 API 金鑰輸入
