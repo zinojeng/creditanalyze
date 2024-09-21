@@ -493,7 +493,7 @@ def main():
                 else:
                     st.error(f"處理檔案 {original_filename} 時出錯")
             except Exception as e:
-                logger.error(f"處理檔案 {original_filename} 時發生異常: {str(e)}")
+                logger.error(f"理檔案 {original_filename} 時發生異常: {str(e)}")
                 st.error(f"處理檔案 {original_filename} 時發生異常: {str(e)}")
             finally:
                 os.unlink(temp_file_path)
@@ -515,6 +515,33 @@ def main():
                 )
         else:
             st.warning("沒有成功處理任何檔案")
+
+def determine_credit_type(organizer):
+    # 將輸入轉換為小寫並去除首尾空格，以便進行不區分大小寫的比較
+    organizer = organizer.lower().strip()
+    
+    # 定義甲類積分的主辦單位列表
+    class_a_organizers = [
+        "中華民國糖尿病學會",
+        "糖尿病學會",
+        "中華民國內分泌學會",
+        "內分泌學會"
+    ]
+    
+    # 檢查是否為甲類積分主辦單位
+    for org in class_a_organizers:
+        if org.lower() == organizer or organizer.endswith(org.lower()):
+            return "甲類"
+    
+    # 如果不是甲類，則返回乙類
+    return "乙類"
+
+# 在解析結果時使用
+parsed_result['積分類別'] = determine_credit_type(parsed_result.get('主辦單位', ''))
+
+# 添加日誌記錄
+import logging
+logging.info(f"主辦單位: {parsed_result.get('主辦單位', '')}, 判斷積分類別: {parsed_result['積分類別']}")
 
 if __name__ == "__main__":
     main()  # 這會在文件末尾添加一個空行
