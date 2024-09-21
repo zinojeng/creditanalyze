@@ -126,7 +126,7 @@ def extract_text_from_pdf_gpt4_vision(client, file_path):
 
 def extract_text_from_pdf(client, file_path):
     # 首先嘗試使用 PyPDF2
-    text = extract_text_from_pdf_pypdf2(file_path)
+    text = extract_text_from_pdf_pypdf2(file_path)  # 注意這裡需要傳入 client
     
     # 如果 PyPDF2 提取的文本為空或太短，則使用 GPT-4 Vision
     if len(text.strip()) < 100:
@@ -222,7 +222,7 @@ def write_to_excel(all_results, output_file):
     title_alignment = Alignment(horizontal="center", vertical="center")
 
     # 寫入表頭
-    headers = ["文件名", "主題", "��辦單位", "日期", "地點", "積分類別", "原積分數", "AI初審積分"]
+    headers = ["文件名", "主", "單位", "日期", "點", "積分類別", "原積分數", "AI初審積分"]
     for col, header in enumerate(headers, start=1):
         cell = ws.cell(row=1, column=col, value=header)
         cell.font = title_font
@@ -354,7 +354,7 @@ def process_single_file(client, file_path):
 
         注意：
         1. 主題應包含時間資訊。
-        2. QA 或問答時間必須合併到其上方的主題中，不要單獨列出 QA 或問答環節。
+        2. QA 或問答時間必須合併到上方的主題中，不要單獨列出 QA 或問答環節。
         3. 每個主題的時間（time）字段應包括主題開始時間和結束時間，如果有 QA，則結束時間為 QA 結束時間。
            例如："09:00-10:30"或"14:00-15:30（包含QA）"。
         4. 每個主題的持續時間（duration）必須包括該主題的講座時間加上其後的 QA 或問答時間（如果有的話）。
@@ -430,38 +430,32 @@ def main():
     - 轉換方法：使用 Microsoft Word 打開 .doc 文件，然後「另存新檔」為 .docx 格式
     """)
 
-    # 在側邊欄中讓使用者輸入 OpenAI API 金鑰
-    with st.sidebar:
-        st.header("設定")
-        openai_api_key = st.text_input(
-            "請輸入您的 OpenAI API 金鑰",
-            value=os.getenv("OPENAI_API_KEY", ""),
-            type="password",
-            key="openai_api_key_input"
-        )
-        if not openai_api_key:
-            st.sidebar.warning("請輸入有效的 OpenAI API 金鑰")
-        else:
-            st.sidebar.success("API 金鑰已設定")
-        
-        # 添加空白空間，將聯絡信息推到底部
-        st.sidebar.empty()
-        st.sidebar.empty()
-        st.sidebar.empty()
-        
-        # 在側邊欄底部添加聯絡信息
-        st.sidebar.markdown("---")  # 添加分隔線
-        st.sidebar.markdown("**程式設計:** 曾耀賢醫師 童綜合醫院")
-        st.sidebar.markdown("**聯絡:** LINE: zinojeng")
+    # 在側邊欄中設置 API 金鑰輸入
+    st.sidebar.title("設定")
+    openai_api_key = st.sidebar.text_input(
+        label="請輸入您的 OpenAI API 金鑰：",
+        type='password',
+        placeholder="例如：sk-2twmA88un4...",
+        help="您可以從 https://platform.openai.com/account/api-keys/ 獲取您的 API 金鑰"
+    )
 
-    # 主要內容區域
+    # 添加空白空間，將聯絡信息推到底部
+    st.sidebar.empty()
+    st.sidebar.empty()
+    st.sidebar.empty()
+    
+    # 在側邊欄底部添加聯絡信息
+    st.sidebar.markdown("---")  # 添加分隔線
+    st.sidebar.markdown("**程式設計:** Tseng Yao Hsien \n Tung's Taichung Metroharbor Hospital")
+    st.sidebar.markdown("**聯絡:** LINE: zinojeng")
+
+    # 檢查是否輸入了 API 金鑰
     if not openai_api_key:
-        st.warning("請在側邊欄輸入 OpenAI API 金鑰以繼續")
+        st.warning("請在側邊欄輸入有效的 OpenAI API 金鑰以繼續")
         return
 
-    # 設定 OpenAI API 金鑰
-    os.environ["OPENAI_API_KEY"] = openai_api_key
-    openai.api_key = openai_api_key
+    # 使用 API 金鑰，但不存儲它
+    client = openai.OpenAI(api_key=openai_api_key)
 
     # 檔案上傳
     uploaded_files = st.file_uploader("上傳檔案（支援 PDF, DOCX, JPG, JPEG, PNG）", accept_multiple_files=True, type=['pdf', 'docx', 'jpg', 'jpeg', 'png'])
@@ -479,14 +473,13 @@ def main():
                 temp_file_path = temp_file.name
 
             try:
-                client = openai.OpenAI(api_key=openai_api_key)
                 parsed_result = process_single_file(client, temp_file_path)
                 if parsed_result:
                     parsed_result['文件名'] = original_filename  # 使用原始檔案名
                     all_results.append(parsed_result)
                     st.success(f"成功處理檔案：{original_filename}")
                     
-                    # 顯示辨識結果
+                    # 顯示辨識結
                     #st.subheader(f"文件：{original_filename} 的辨識結果")
                     #st.json(parsed_result)
 
