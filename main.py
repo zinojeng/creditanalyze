@@ -34,6 +34,8 @@ import numpy as np
 from pdf2image import convert_from_path
 import re
 import logging
+import textwrap
+from openpyxl.utils import get_column_letter
 
 load_dotenv()  # 載入 .env 檔案中的環境變數
 
@@ -169,9 +171,9 @@ def analyze_file(client, file_path):
 
 def calculate_credits(duration_minutes, credit_type):
     if credit_type == "甲類":
-        return math.ceil(duration_minutes / 50)
+        return math.floor(duration_minutes / 60)
     else:  # 乙類
-        return round(duration_minutes / 50 * 0.5, 1)
+        return round(duration_minutes / 120, 1)  # 每 120 分鐘 1 分，即每 60 分鐘 0.5 分
 
 def get_gpt4_json_response(client, prompt):
     try:
@@ -221,13 +223,16 @@ def write_to_excel(all_results, output_file):
     title_fill = PatternFill(start_color="DDDDDD", end_color="DDDDDD", fill_type="solid")
     title_alignment = Alignment(horizontal="center", vertical="center")
 
-    # 寫入表頭
-    headers = ["文件名", "主", "單位", "日期", "點", "積分類別", "原積分數", "AI初審積分"]
-    for col, header in enumerate(headers, start=1):
+    # 寫入標題
+    headers = ["文件名", "主題", "主辦單位", "日期", "地點", "積分類別", "原積分數", "AI初審積分"]
+    column_widths = [20, 65, 45, 25, 15, 10, 10, 10]  # 為每列設置寬度
+
+    for col, (header, width) in enumerate(zip(headers, column_widths), start=1):
         cell = ws.cell(row=1, column=col, value=header)
         cell.font = title_font
         cell.fill = title_fill
         cell.alignment = title_alignment
+        ws.column_dimensions[get_column_letter(col)].width = width
 
     # 寫入每個文件的基本信息
     for row, result in enumerate(all_results, start=2):
@@ -259,11 +264,15 @@ def write_to_excel(all_results, output_file):
             ("積分類別", result.get('積分類別', '')),
             ("原始積分數", result.get('原始積分數', 0)),
             ("AI初審積分", result.get('AI初審積分', 0)),
-            ("AI初審積分說明", result.get('AI初審積分說明', ''))
+            ("AI初審積分說明", result.get('AI初審積分說明', '')),
+            ("AI初審詳細說明", result.get('AI初審詳細說明', '')),
+            ("積分計算方式", result.get('積分計算方式', ''))
         ]
         for info in basic_info:
             ws_detail.cell(row=current_row, column=1, value=info[0])
-            ws_detail.cell(row=current_row, column=2, value=info[1])
+            cell = ws_detail.cell(row=current_row, column=2, value=info[1])
+            if info[0] == "AI初審詳細說明":
+                cell.alignment = Alignment(wrap_text=True, vertical='top')
             current_row += 1
 
         # 寫入演講主題表格題
@@ -288,19 +297,11 @@ def write_to_excel(all_results, output_file):
         # 添加空行作為分隔
         current_row += 2
 
-    # 調整列寬
-    for ws in wb.worksheets:
-        for column in ws.columns:
-            max_length = 0
-            column_letter = column[0].column_letter
-            for cell in column:
-                try:
-                    if len(str(cell.value)) > max_length:
-                        max_length = len(cell.value)
-                except:
-                    pass
-            adjusted_width = (max_length + 2)
-            ws.column_dimensions[column_letter].width = adjusted_width
+    # 特別處理 'AI初審詳細說明' 列
+    ws_detail.column_dimensions['A'].width = 80  # 設置固定寬度
+    ws_detail.column_dimensions['B'].width = 135  # 設置固定寬度
+    ws_detail.column_dimensions['C'].width = 36
+    ws_detail.column_dimensions['D'].width = 14
 
     wb.save(output_file)
 
@@ -318,9 +319,44 @@ def is_special_item(topic):
     topic_lower = topic.lower()
     return any(keyword in topic_lower for keyword in special_keywords)
 
+def determine_credit_type(organizer):
+    original_organizer = organizer
+    organizer = organizer.lower().strip()
+    
+    logging.info(f"開始判斷積分類別 - 原始主辦單位: '{original_organizer}', 處理後: '{organizer}'")
+    
+    # 定義甲類積分的主單位列表
+    class_a_organizers = [
+        "中華民國糖尿病學會",
+        "糖尿病學會",
+        "中華民國內分泌學會",
+        "內分泌學會"
+    ]
+    
+    # 定義特定的乙類積分主辦單位
+    class_b_organizers = [
+        "台灣基層糖尿病協會",
+        "基層糖尿病協會"
+    ]
+    
+    # 檢查是否為特定的乙類積分主辦單位
+    for org in class_b_organizers:
+        if org.lower() in organizer:
+            logging.info(f"部分匹配到特定乙類主辦單位: '{org}'")
+            return "乙類"
+    
+    # 檢查是否為甲類積分主辦單位
+    for org in class_a_organizers:
+        if org.lower() == organizer:
+            logging.info(f"完全匹配到甲類主辦單位: '{org}'")
+            return "甲類"
+    
+    logging.info("未匹配到特定主辦單位，默認為乙類")
+    return "乙類"
+
 def process_single_file(client, file_path):
     try:
-        analyzed_content = analyze_file(client, file_path)  # 注意這裡需要傳入 client
+        analyzed_content = analyze_file(client, file_path)
         if not analyzed_content:
             return None
 
@@ -330,7 +366,7 @@ def process_single_file(client, file_path):
         - 主辦單位
         - 日期
         - 地點
-        - 演講主題（多筆，每筆包括：主題（包含時間）、講者、主持人、時間（time）、持續時間（分鐘）、AI初審）
+        - 演講主題（多筆，每筆包括：主題（包含時間）、講者、主持人、時間、持續時間（分鐘）、AI初審）
         
         JSON格式如下：
         {{
@@ -358,7 +394,7 @@ def process_single_file(client, file_path):
         3. 每個主題的時間（time）字段應包括主題開始時間和結束時間，如果有 QA，則結束時間為 QA 結束時間。
            例如："09:00-10:30"或"14:00-15:30（包含QA）"。
         4. 每個主題的持續時間（duration）必須包括該主題的講座時間加上其後的 QA 或問答時間（如果有的話）。
-           例如，如果一個主題講座時間為 30 分鐘，之後有 10 分鐘 QA，則該主題的總 duration 應為 40 分鐘。
+           例如，如果一個主題講座時間為 30 分鐘，之後有 10 分鐘 QA，則該主題的總 duration 為 40 分鐘。
         5. 如果一個主題包含了 QA 時間，請在該主題的 topic 字段末尾添加 "（包含 QA）"。
         6. Registration, Opening Remarks, Closing Remarks 等項目應包含在演講主題列表中，並視為與會議主題直接相關。
         7. 積分類別計分原則："中華民國糖尿病學會"主辦，或"糖尿病學會"主辦，為甲類，其餘為乙類。
@@ -372,8 +408,17 @@ def process_single_file(client, file_path):
         """
 
         parsed_result = get_gpt4_json_response(client, prompt)
-        if not parsed_result:
-            logger.error("GPT-4 分析失敗")
+        if parsed_result:
+            logging.info(f"GPT-4 解析結果: {json.dumps(parsed_result, ensure_ascii=False, indent=2)}")
+            organizer = parsed_result.get('主辦單位', '')
+            logging.info(f"從 GPT-4 解析結果中獲取的主辦單位: '{organizer}'")
+            
+            credit_type = determine_credit_type(organizer)
+            parsed_result['積分類別'] = credit_type
+
+            logging.info(f"最終判斷結果 - 主辦單位: '{organizer}', 積分類別: {credit_type}")
+        else:
+            logging.error("GPT-4 分析失敗")
             return None
 
         # 確保 '演講主題' 字段存在且為列表
@@ -387,32 +432,48 @@ def process_single_file(client, file_path):
         # 算總時間和有效時間
         total_duration = 0
         valid_duration = 0
+        ai_review_details = []
         for topic in parsed_result['演講主題']:
             duration = topic.get('duration', 0)
             total_duration += duration
             
-            # 檢查是否為特殊項目
-            if is_special_item(topic.get('topic', '')):
+            topic_name = topic.get('topic', '')
+            ai_review = topic.get('ai_review', '').lower()
+            
+            if is_special_item(topic_name):
                 valid_duration += duration
-                # 確保這些項目不進行 AI 初審
-                topic['ai_review'] = ''
+                ai_review_details.append(f"{topic_name}: 特殊項目，全部計入 ({duration} 分鐘)")
+            elif ai_review == '相關' or ai_review == '':
+                valid_duration += duration
+                ai_review_details.append(f"{topic_name}: AI 判定相關，全部計入 ({duration} 分鐘)")
+            elif '?' in ai_review:
+                valid_duration += duration / 2
+                ai_review_details.append(f"{topic_name}: AI 判定不確定，計入一半時間 ({duration/2} 分鐘)")
             else:
-                # 檢查 AI 初審結果
-                ai_review = topic.get('ai_review', '').lower()
-                if ai_review == '相關' or ai_review == '':
-                    valid_duration += duration
-                elif '?' in ai_review:
-                    # 對於不確定的情況，計入一半的時間
-                    valid_duration += duration / 2
+                ai_review_details.append(f"{topic_name}: AI 判定不相關，不計入 (0 分鐘)")
 
         # 計算積分
-        credit_type = parsed_result.get('積分類別', '')
         credits = calculate_credits(valid_duration, credit_type)
 
         # 添加計算結果到 parsed_result
         parsed_result['原始積分數'] = calculate_credits(total_duration, credit_type)
         parsed_result['AI初審積分'] = credits
         parsed_result['AI初審積分說明'] = f"有效時間：{valid_duration} 分鐘，總時間：{total_duration} 分鐘"
+        parsed_result['AI初審詳細說明'] = textwrap.dedent(f"""\
+            AI 初審積分計算詳情：
+            總時間：{total_duration} 分鐘
+            有效時間：{valid_duration} 分鐘
+            {credit_type}積分計算方式：{'每 60 分鐘 1 分' if credit_type == '甲類' else '每 60 分鐘 0.5 分'}
+            各主題審查結果：
+            {chr(10).join(ai_review_details)}
+            """).strip()
+        parsed_result['積分計算方式'] = (
+            f"{credit_type}積分：{'每 60 分鐘 1 分' if credit_type == '甲類' else '每 60 分鐘 0.5 分'}"
+        )
+
+        logging.info(f"AI 初審積分計算詳情：\n{parsed_result['AI初審詳細說明']}")
+        logging.info(f"積分計算方式：{parsed_result['積分計算方式']}")
+        logging.info(f"最終 AI 初審積分：{credits}")
 
         return parsed_result
     except Exception as e:
@@ -481,7 +542,7 @@ def main():
                     st.success(f"成功處理檔案：{original_filename}")
                     
                     # 顯示辨識結
-                    #st.subheader(f"文件：{original_filename} 的辨識結果")
+                    #st.subheader(f"件：{original_filename} 的辨識結果")
                     #st.json(parsed_result)
 
                     # 檢查需要人工審核的項目
@@ -515,33 +576,6 @@ def main():
                 )
         else:
             st.warning("沒有成功處理任何檔案")
-
-def determine_credit_type(organizer):
-    # 將輸入轉換為小寫並去除首尾空格，以便進行不區分大小寫的比較
-    organizer = organizer.lower().strip()
-    
-    # 定義甲類積分的主辦單位列表
-    class_a_organizers = [
-        "中華民國糖尿病學會",
-        "糖尿病學會",
-        "中華民國內分泌學會",
-        "內分泌學會"
-    ]
-    
-    # 檢查是否為甲類積分主辦單位
-    for org in class_a_organizers:
-        if org.lower() == organizer or organizer.endswith(org.lower()):
-            return "甲類"
-    
-    # 如果不是甲類，則返回乙類
-    return "乙類"
-
-# 在解析結果時使用
-parsed_result['積分類別'] = determine_credit_type(parsed_result.get('主辦單位', ''))
-
-# 添加日誌記錄
-import logging
-logging.info(f"主辦單位: {parsed_result.get('主辦單位', '')}, 判斷積分類別: {parsed_result['積分類別']}")
 
 if __name__ == "__main__":
     main()  # 這會在文件末尾添加一個空行
