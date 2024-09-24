@@ -36,12 +36,15 @@ import re
 import logging
 import textwrap
 from openpyxl.utils import get_column_letter
+import fitz  # PyMuPDF
 
 load_dotenv()  # 載入 .env 檔案中的環境變數
 
 # 設置日誌
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+VERSION = "1.0.3"
 
 def preprocess_image(image):
     # 轉換為灰度圖
@@ -127,15 +130,19 @@ def extract_text_from_pdf_gpt4_vision(client, file_path):
         return ""
 
 def extract_text_from_pdf(client, file_path):
-    # 首先嘗試使用 PyPDF2
-    text = extract_text_from_pdf_pypdf2(file_path)  # 注意這裡需要傳入 client
-    
-    # 如果 PyPDF2 提取的文本為空或太短，則使用 GPT-4 Vision
-    if len(text.strip()) < 100:
-        logger.info("PyPDF2 提取的文本不足，切換到 GPT-4 Vision")
-        text = extract_text_from_pdf_gpt4_vision(client, file_path)
-    
-    return text
+    # 首先嘗試使用 PyMuPDF
+    try:
+        doc = fitz.open(file_path)
+        text = ""
+        for page in doc:
+            text += page.get_text()
+        return text
+    except Exception as e:
+        logger.error(f"PyMuPDF 從 PDF 提取文本時出錯: {str(e)}")
+        
+    # 如果 PyMuPDF 提取失敗，則使用 GPT-4 Vision
+    logger.info("PyMuPDF 提取失敗，切換到 GPT-4 Vision")
+    return extract_text_from_pdf_gpt4_vision(client, file_path)
 
 def clean_text(text):
     # 移除多餘的空白字符
@@ -491,6 +498,7 @@ def process_single_file(client, file_path):
 
 def main():
     st.title("糖尿病學會 學分分析助手")
+    st.caption(f"Version {VERSION}")
 
     # 添加文件格式說明
     st.markdown("""
