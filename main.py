@@ -121,7 +121,7 @@ def extract_text_from_pdf_gpt4_vision(client, file_path):
             
             all_text += response.choices[0].message.content + "\n\n"
             
-            # 刪除臨時文件
+            # 刪除臨���文件
             os.unlink(temp_file_path)
 
         return all_text.strip()
@@ -408,8 +408,8 @@ def process_single_file(client, file_path):
            例如，如果一個主題講座時間為 30 分鐘，之後有 10 分鐘 QA，則該主題的總 duration 為 40 分鐘。
         5. 如果一個主題包含了 QA 時間，請在該主題的 topic 字段末尾添加 "（包含 QA）"。
         6. Registration, Opening Remarks, Closing Remarks 等項目應包含在演講主題列表中，並視為與會議主題直接相關。
-        7. 積分類別計分原則："中華民國糖尿病學會"主辦，或"糖尿病學會"主辦，為甲類，其餘為乙類。
-        8. AI初審：針對topic內容進行審查。和糖尿病、高血壓、高血脂或相關併發症有關的，註明"相關"，沒有關係的，註明"不相關"；不確定者，註明"？"。"不相關"者請註明原因。
+        7. 積分類別計分原則："中華民國糖尿病學會"主辦，或"糖尿病學會"主辦，為甲類其餘為乙類。
+        8. AI初審：針對topic內容進行審查。糖尿病、高血壓、高血脂或相關併發症有關的，註明"相關"，沒有關係的，註明"不相關"；不確定者，註明"？"。"不相關"者請註明原因。
            
         9. 有以下相關字眼，Registration, Opening Remarks, Closing Remarks, Pannel Discussion, 等項目不需要進行 AI 初審，不需列是否相關，但其時間不列入學分總時間。
         10. 如果無法辨識講者名字，請將講者欄位留空。
@@ -432,7 +432,7 @@ def process_single_file(client, file_path):
             logging.error("GPT-4 分析失敗")
             return None
 
-        # 確保 '演講主題' 字段存在且為列表
+        # 確保 '演講題' 字段存在且為列表
         if '演講主題' not in parsed_result or not isinstance(parsed_result['演講主題'], list):
             logger.warning(f"警告：分析結果中沒有有效的 '演講主題' 字段")
             parsed_result['演講主題'] = []
@@ -498,7 +498,6 @@ def process_single_file(client, file_path):
 
 def main():
     st.title("糖尿病學會 學分分析助手")
-    st.caption(f"Version {VERSION}")
 
     # 添加文件格式說明
     st.markdown("""
@@ -527,6 +526,7 @@ def main():
     st.sidebar.markdown("---")  # 添加分隔線
     st.sidebar.markdown("**程式設計:** Tseng Yao Hsien \n Tung's Taichung Metroharbor Hospital")
     st.sidebar.markdown("**聯絡:** LINE: zinojeng")
+    st.sidebar.markdown(f"**版本：** Version {VERSION}")
 
     # 檢查是否輸入了 API 金鑰
     if not openai_api_key:
@@ -558,7 +558,7 @@ def main():
                     all_results.append(parsed_result)
                     st.success(f"成功處理檔案：{original_filename}")
                     
-                    # 顯示辨識結
+                    # 顯示辨識結果
                     #st.subheader(f"件：{original_filename} 的辨識結果")
                     #st.json(parsed_result)
 
