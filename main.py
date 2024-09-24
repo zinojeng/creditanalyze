@@ -348,6 +348,8 @@ def determine_credit_type(organizer):
     class_b_organizers = [
         "台灣基層糖尿病協會",
         "基層糖尿病協會"
+        "衛教學會"
+        "糖尿病衛教學會"
     ]
     
     # 檢查是否為特定的乙類積分主辦單位
