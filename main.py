@@ -171,9 +171,13 @@ def analyze_file(client, file_path):
 
 def calculate_credits(duration_minutes, credit_type):
     if credit_type == "甲類":
-        return math.floor(duration_minutes / 60)
+        return math.floor(duration_minutes / 50)
     else:  # 乙類
-        return round(duration_minutes / 120, 1)  # 每 120 分鐘 1 分，即每 60 分鐘 0.5 分
+        full_credits = duration_minutes // 50
+        remaining_minutes = duration_minutes % 50
+        if remaining_minutes >= 25:  # 如果剩餘分鐘數超過或等於 25，則四捨五入
+            full_credits += 1
+        return round(full_credits * 0.5, 1)  # 乙類每學分為 0.5 分
 
 def get_gpt4_json_response(client, prompt):
     try:
@@ -400,7 +404,7 @@ def process_single_file(client, file_path):
         7. 積分類別計分原則："中華民國糖尿病學會"主辦，或"糖尿病學會"主辦，為甲類，其餘為乙類。
         8. AI初審：針對topic內容進行審查。和糖尿病、高血壓、高血脂或相關併發症有關的，註明"相關"，沒有關係的，註明"不相關"；不確定者，註明"？"。"不相關"者請註明原因。
            
-        9. 有以下相關字眼，Registration, Opening Remarks, Closing Remarks, Pannel Discussion, 等項目不需要進行 AI 初審，不需列是否相關，但其時間應入學分總時間。
+        9. 有以下相關字眼，Registration, Opening Remarks, Closing Remarks, Pannel Discussion, 等項目不需要進行 AI 初審，不需列是否相關，但其時間不列入學分總時間。
         10. 如果無法辨識講者名字，請將講者欄位留空。
 
         以下是需要分析的內容：
@@ -429,10 +433,11 @@ def process_single_file(client, file_path):
         # 處理主題，重新計算包含 QA 的 duration
         parsed_result['演講主題'] = process_topics(parsed_result['演講主題'])
 
-        # 算總時間和有效時間
+        # 計算總時間和有效時間
         total_duration = 0
         valid_duration = 0
         ai_review_details = []
+        uncertain_items = []
         for topic in parsed_result['演講主題']:
             duration = topic.get('duration', 0)
             total_duration += duration
@@ -441,14 +446,13 @@ def process_single_file(client, file_path):
             ai_review = topic.get('ai_review', '').lower()
             
             if is_special_item(topic_name):
+                ai_review_details.append(f"{topic_name}: 特殊項目，不計入學分計算 (0 分鐘)")
+            elif ai_review == '相關':
                 valid_duration += duration
-                ai_review_details.append(f"{topic_name}: 特殊項目，全部計入 ({duration} 分鐘)")
-            elif ai_review == '相關' or ai_review == '':
-                valid_duration += duration
-                ai_review_details.append(f"{topic_name}: AI 判定相關，全部計入 ({duration} 分鐘)")
+                ai_review_details.append(f"{topic_name}: AI 判定相關，計入 ({duration} 分鐘)")
             elif '?' in ai_review:
-                valid_duration += duration / 2
-                ai_review_details.append(f"{topic_name}: AI 判定不確定，計入一半時間 ({duration/2} 分鐘)")
+                uncertain_items.append(f"{topic_name}: AI 判定不確定，不計入 ({duration} 分鐘)")
+                ai_review_details.append(f"{topic_name}: AI 判定不確定，不計入 (0 分鐘)")
             else:
                 ai_review_details.append(f"{topic_name}: AI 判定不相關，不計入 (0 分鐘)")
 
@@ -459,16 +463,21 @@ def process_single_file(client, file_path):
         parsed_result['原始積分數'] = calculate_credits(total_duration, credit_type)
         parsed_result['AI初審積分'] = credits
         parsed_result['AI初審積分說明'] = f"有效時間：{valid_duration} 分鐘，總時間：{total_duration} 分鐘"
+        
+        uncertain_explanation = "需要人工審核的項目：\n" + "\n".join(uncertain_items) if uncertain_items else ""
+        
         parsed_result['AI初審詳細說明'] = textwrap.dedent(f"""\
             AI 初審積分計算詳情：
             總時間：{total_duration} 分鐘
             有效時間：{valid_duration} 分鐘
-            {credit_type}積分計算方式：{'每 60 分鐘 1 分' if credit_type == '甲類' else '每 60 分鐘 0.5 分'}
+            {credit_type}積分計算方式：{'每 50-60 分鐘 1 分' if credit_type == '甲類' else '每 50-60 分鐘 0.5 分'}
             各主題審查結果：
             {chr(10).join(ai_review_details)}
+            
+            {uncertain_explanation}
             """).strip()
         parsed_result['積分計算方式'] = (
-            f"{credit_type}積分：{'每 60 分鐘 1 分' if credit_type == '甲類' else '每 60 分鐘 0.5 分'}"
+            f"{credit_type}積分：{'每 50-60 分鐘 1 分' if credit_type == '甲類' else '每 50-60 分鐘 0.5 分'}"
         )
 
         logging.info(f"AI 初審積分計算詳情：\n{parsed_result['AI初審詳細說明']}")
